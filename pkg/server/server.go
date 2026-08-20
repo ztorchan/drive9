@@ -176,7 +176,7 @@ func (s *Server) provisionerForTenantProvider(provider string) tenant.Provisione
 	switch provider {
 	case tenant.ProviderTiDBCloudStarterLegacy:
 		return s.legacyStarterProvisioner
-	case tenant.ProviderTiDBCloudNative, tenant.ProviderTiDBZero, tenant.ProviderDB9:
+	case tenant.ProviderTiDBCloudNative, tenant.ProviderTiDBZero, tenant.ProviderDB9, tenant.ProviderMySQL:
 		return s.provisioner
 	default:
 		return nil
@@ -5751,6 +5751,13 @@ func (s *Server) cleanupProvisionedClusterAfterProvisionFailure(ctx context.Cont
 }
 
 func dbTLSForProvisionedTenant(provider string) bool {
+	if provider == tenant.ProviderMySQL {
+		v := strings.TrimSpace(strings.ToLower(os.Getenv("DRIVE9_MYSQL_TLS")))
+		if v == "" {
+			return true
+		}
+		return v == "1" || v == "true" || v == "yes"
+	}
 	if !tenant.UsesTiDBCloudNativeCredentials(provider) {
 		return true
 	}

@@ -887,6 +887,9 @@ func (m *tenantWorkerManager) taskTypesForProvider(provider string) []semantic.T
 		}
 		return nil
 	}
+	if !tenant.SupportsSemanticTasks(provider) {
+		return nil
+	}
 	return unionTaskTypes(m.appManagedTaskTypes(), m.poolExtractTaskTypes())
 }
 
@@ -917,7 +920,9 @@ func (m *tenantWorkerManager) taskTypesForTarget(b *backend.Dat9Backend) []seman
 	if b.SupportsAsyncVideoExtract() {
 		out = append(out, semantic.TaskTypeVideoExtractVisual)
 	}
-	out = append(out, m.appManagedTaskTypes()...)
+	if b.AppSemanticTasksEnabled() {
+		out = append(out, m.appManagedTaskTypes()...)
+	}
 	if len(out) == 0 {
 		return nil
 	}

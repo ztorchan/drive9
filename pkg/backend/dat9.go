@@ -253,6 +253,12 @@ func (b *Dat9Backend) UsesDatabaseAutoEmbedding() bool {
 	return b.databaseAutoEmbedding
 }
 
+// AppSemanticTasksEnabled reports whether app-managed semantic task creation
+// is enabled for this backend.
+func (b *Dat9Backend) AppSemanticTasksEnabled() bool {
+	return b != nil && b.appSemanticTasksEnabled
+}
+
 func (b *Dat9Backend) genID() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()

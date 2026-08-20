@@ -35,6 +35,7 @@ import (
 	"github.com/mem9-ai/drive9/pkg/slockoauth"
 	"github.com/mem9-ai/drive9/pkg/tenant"
 	"github.com/mem9-ai/drive9/pkg/tenant/db9"
+	"github.com/mem9-ai/drive9/pkg/tenant/mysql"
 	"github.com/mem9-ai/drive9/pkg/tenant/schema"
 	"github.com/mem9-ai/drive9/pkg/tenant/starter"
 	"github.com/mem9-ai/drive9/pkg/tenant/tidbcloudnative"
@@ -82,9 +83,16 @@ func main() {
 	if len(os.Args) > 2 {
 		usage(os.Stderr, 2)
 	}
-	autoEmbeddingConfig, err := schema.TiDBAutoEmbeddingConfigFromEnv()
+	providerType := envOr("DRIVE9_TENANT_PROVIDER", tenant.ProviderTiDBZero)
+	providerType, err := tenant.NormalizeProvider(providerType)
 	die(err)
-	die(schema.ConfigureTiDBAutoEmbedding(autoEmbeddingConfig))
+
+	var autoEmbeddingConfig schema.TiDBAutoEmbeddingConfig
+	if tenant.UsesTiDBAutoEmbedding(providerType) {
+		autoEmbeddingConfig, err = schema.TiDBAutoEmbeddingConfigFromEnv()
+		die(err)
+		die(schema.ConfigureTiDBAutoEmbedding(autoEmbeddingConfig))
+	}
 
 	addr := envOr("DRIVE9_LISTEN_ADDR", defaultListenAddr)
 	if len(os.Args) == 2 {
@@ -108,13 +116,14 @@ func main() {
 	if err := s3cfg.validate(); err != nil {
 		die(err)
 	}
-	backendOptions, err := buildBackendOptionsFromEnv()
+	semanticEnabled := tenant.SupportsSemanticTasks(providerType)
+	backendOptions, err := buildBackendOptionsFromEnvForSemantic(semanticEnabled)
 	if err != nil {
 		die(err)
 	}
 	autoEmbeddingAPIKey := strings.TrimSpace(os.Getenv(schema.EnvTiDBAutoEmbeddingAPIKey))
 	autoEmbeddingAPIBase := strings.TrimSpace(os.Getenv(schema.EnvTiDBAutoEmbeddingAPIBase))
-	semanticEmbedder, tenantWorkerOpts, err := buildTenantWorkerConfigFromEnv()
+	semanticEmbedder, tenantWorkerOpts, err := buildTenantWorkerConfigFromEnvForSemantic(semanticEnabled)
 	if err != nil {
 		die(err)
 	}
@@ -122,6 +131,16 @@ func main() {
 		backendOptions.QueryEmbedding = backend.QueryEmbeddingOptions{Client: semanticEmbedder}
 	}
 	backendOptions.AppSemanticTasksEnabled = semanticEmbedder != nil
+	if !tenant.SupportsSemanticTasks(providerType) {
+		semanticEmbedder = nil
+		backendOptions.AppSemanticTasksEnabled = false
+		backendOptions.QueryEmbedding = backend.QueryEmbeddingOptions{}
+		backendOptions.AsyncImageExtract = backend.AsyncImageExtractOptions{}
+		backendOptions.AsyncAudioExtract = backend.AsyncAudioExtractOptions{}
+		backendOptions.AsyncVideoExtract = backend.AsyncVideoExtractOptions{}
+		logger.Info(context.Background(), "tenant_semantic_features_disabled",
+			zap.String("provider", providerType))
+	}
 
 	// P1-3: Configurable quota cache refresh interval (default 30s).
 	// In multi-pod deployments, increasing this reduces per-tenant-per-pod DB reads.
@@ -180,7 +199,6 @@ func main() {
 	aliyunKMSEndpoint := strings.TrimSpace(os.Getenv("DRIVE9_ALIYUN_KMS_ENDPOINT"))
 	tokenHex := os.Getenv("DRIVE9_TOKEN_SIGNING_KEY")
 	vaultMKHex := os.Getenv("DRIVE9_VAULT_MASTER_KEY")
-	providerType := envOr("DRIVE9_TENANT_PROVIDER", tenant.ProviderTiDBZero)
 	tenantPoolMaxSize, err := tenantPoolMaxSizeFromEnv()
 	if err != nil {
 		die(err)
@@ -214,10 +232,6 @@ func main() {
 	if err != nil {
 		die(err)
 	}
-	providerType, err = tenant.NormalizeProvider(providerType)
-	if err != nil {
-		die(err)
-	}
 	disableDatabaseAutoEmbedding := envBool("DRIVE9_DISABLE_AUTO_EMBEDDING", false)
 	if tenant.UsesTiDBAutoEmbedding(providerType) && !disableDatabaseAutoEmbedding {
 		die(schema.ValidateTiDBAutoEmbeddingProviderConfig(schema.TiDBAutoEmbeddingProviderConfig{
@@ -237,9 +251,11 @@ func main() {
 		provisioner, provisionerErr = tidbcloudnative.NewProvisionerFromEnv(providerType)
 	case tenant.ProviderDB9:
 		provisioner, provisionerErr = db9.NewProvisionerFromEnv()
+	case tenant.ProviderMySQL:
+		provisioner, provisionerErr = mysql.NewProvisionerFromEnv()
 	}
 	if provisionerErr != nil {
-		if tenant.UsesTiDBCloudNativeCredentials(providerType) {
+		if tenant.UsesTiDBCloudNativeCredentials(providerType) || providerType == tenant.ProviderMySQL {
 			logger.Error(context.Background(), "provisioner_failed", zap.String("provider", providerType), zap.Error(provisionerErr))
 			os.Exit(1)
 		}
@@ -580,7 +596,7 @@ func usage(out io.Writer, exitCode int) {
 	_, _ = fmt.Fprintf(out, `usage:
   drive9-server [listen-addr]
   drive9-server version
-  drive9-server schema dump-init-sql --provider <db9|tidb_zero|tidb_cloud_native>
+  drive9-server schema dump-init-sql --provider <db9|tidb_zero|tidb_cloud_native|mysql>
 
 environment:
   DRIVE9_LISTEN_ADDR serve listen address (default: :9009)
@@ -634,7 +650,12 @@ environment:
                                     required by openai, cohere, jina_ai, gemini, huggingface, nvidia_nim, nvidia
   DRIVE9_TIDB_AUTO_EMBEDDING_API_BASE provider base endpoint for models that require it
                                      optional for openai models; set it for Azure OpenAI endpoints
-  DRIVE9_TENANT_PROVIDER db9|tidb_zero|tidb_cloud_native (default for provisioning)
+  DRIVE9_TENANT_PROVIDER db9|tidb_zero|tidb_cloud_native|mysql (default for provisioning)
+  DRIVE9_MYSQL_ADMIN_DSN privileged MySQL DSN used to create and delete tenant databases (required for mysql)
+  DRIVE9_MYSQL_DATABASE_PREFIX deterministic tenant database prefix (default: drive9_t_)
+  DRIVE9_MYSQL_USER_PREFIX deterministic tenant database user prefix (default: drive9_u_)
+  DRIVE9_MYSQL_ACCOUNT_HOST MySQL account host for tenant users (default: %%)
+  DRIVE9_MYSQL_TLS true|false to use TLS for provisioned tenant connections (default: true)
   DRIVE9_TIDBCLOUD_DEFAULT_SPENDING_LIMIT default TiDB Cloud Cluster spendingLimit.monthly; native defaults to 1000 when unset
   DRIVE9_TIDBCLOUD_NATIVE_API_URL TiDB Cloud Cluster API base URL for tidb_cloud_native
   DRIVE9_TIDBCLOUD_IAM_API_URL TiDB Cloud IAM API base URL; required for tidb_cloud_native
@@ -810,6 +831,10 @@ func applyQuotaDefaultsFromEnv() {
 }
 
 func buildBackendOptionsFromEnv() (backend.Options, error) {
+	return buildBackendOptionsFromEnvForSemantic(true)
+}
+
+func buildBackendOptionsFromEnvForSemantic(semanticEnabled bool) (backend.Options, error) {
 	var opts backend.Options
 	if strings.TrimSpace(os.Getenv("DRIVE9_QUOTA_SOURCE")) != "" {
 		return backend.Options{}, fmt.Errorf("DRIVE9_QUOTA_SOURCE has been removed; central quota is now driven by meta-store wiring")
@@ -826,6 +851,9 @@ func buildBackendOptionsFromEnv() (backend.Options, error) {
 	opts.TextExtractMaxBytes = envInt64("DRIVE9_TEXT_EXTRACT_MAX_BYTES", backend.DefaultTextExtractMaxBytes)
 	if opts.TextExtractMaxBytes <= 0 {
 		return backend.Options{}, fmt.Errorf("DRIVE9_TEXT_EXTRACT_MAX_BYTES must be a positive integer")
+	}
+	if !semanticEnabled {
+		return opts, nil
 	}
 
 	queryBaseURL := strings.TrimSpace(os.Getenv("DRIVE9_QUERY_EMBED_API_BASE"))
@@ -1043,6 +1071,10 @@ func buildVideoExtractOptionsFromEnv() (backend.AsyncVideoExtractOptions, error)
 }
 
 func buildTenantWorkerConfigFromEnv() (embedding.Client, server.TenantWorkerOptions, error) {
+	return buildTenantWorkerConfigFromEnvForSemantic(true)
+}
+
+func buildTenantWorkerConfigFromEnvForSemantic(semanticEnabled bool) (embedding.Client, server.TenantWorkerOptions, error) {
 	// Warn about deprecated env vars that are no longer parsed.
 	for _, deprecated := range []string{"DRIVE9_SEMANTIC_RECOVER_INTERVAL_MS", "DRIVE9_SEMANTIC_TENANT_LIMIT"} {
 		if os.Getenv(deprecated) != "" {
@@ -1056,6 +1088,9 @@ func buildTenantWorkerConfigFromEnv() (embedding.Client, server.TenantWorkerOpti
 		RetryBaseDelay:       time.Duration(envInt("DRIVE9_SEMANTIC_RETRY_BASE_MS", 200)) * time.Millisecond,
 		RetryMaxDelay:        time.Duration(envInt("DRIVE9_SEMANTIC_RETRY_MAX_MS", 30000)) * time.Millisecond,
 		PerTenantConcurrency: envInt("DRIVE9_SEMANTIC_PER_TENANT_CONCURRENCY", 1),
+	}
+	if !semanticEnabled {
+		return nil, opts, nil
 	}
 	baseURL := strings.TrimSpace(os.Getenv("DRIVE9_EMBED_API_BASE"))
 	apiKey := strings.TrimSpace(os.Getenv("DRIVE9_EMBED_API_KEY"))

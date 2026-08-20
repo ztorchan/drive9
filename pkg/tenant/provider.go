@@ -6,6 +6,7 @@ const (
 	ProviderDB9             = "db9"
 	ProviderTiDBZero        = "tidb_zero"
 	ProviderTiDBCloudNative = "tidb_cloud_native"
+	ProviderMySQL           = "mysql"
 
 	// ProviderTiDBCloudStarterLegacy is kept only for tenant rows persisted
 	// before starter provisioning was removed. Do not accept it for new
@@ -15,7 +16,7 @@ const (
 
 func NormalizeProvider(provider string) (string, error) {
 	switch provider {
-	case ProviderDB9, ProviderTiDBZero, ProviderTiDBCloudNative:
+	case ProviderDB9, ProviderTiDBZero, ProviderTiDBCloudNative, ProviderMySQL:
 		return provider, nil
 	default:
 		return "", fmt.Errorf("unsupported provider: %s", provider)
@@ -30,7 +31,7 @@ func UsesTiDBCloudNativeCredentials(provider string) bool {
 
 func SmallInDB(provider string) bool {
 	switch provider {
-	case ProviderTiDBZero, ProviderTiDBCloudNative, ProviderTiDBCloudStarterLegacy:
+	case ProviderTiDBZero, ProviderTiDBCloudNative, ProviderTiDBCloudStarterLegacy, ProviderMySQL:
 		return true
 	default:
 		return false
@@ -49,8 +50,22 @@ func UsesTiDBAutoEmbedding(provider string) bool {
 }
 
 // SupportsClusterDelete reports whether a persisted tenant provider can delete
-// its backing TiDB Cloud cluster. The legacy starter value is kept only so rows
-// persisted before starter provisioning was removed keep their cleanup path.
+// its backing database or TiDB Cloud cluster. The legacy starter value is kept
+// only so rows persisted before starter provisioning was removed keep their
+// cleanup path.
 func SupportsClusterDelete(provider string) bool {
-	return provider == ProviderTiDBCloudNative || provider == ProviderTiDBCloudStarterLegacy
+	return provider == ProviderTiDBCloudNative || provider == ProviderTiDBCloudStarterLegacy || provider == ProviderMySQL
+}
+
+// SupportsAppSemanticTasks reports whether the provider supports app-managed
+// embedding and semantic extraction tasks. MySQL intentionally exposes only
+// the non-semantic filesystem schema.
+func SupportsAppSemanticTasks(provider string) bool {
+	return provider == ProviderDB9
+}
+
+// SupportsSemanticTasks reports whether a provider has any semantic task
+// implementation, either database-managed or app-managed.
+func SupportsSemanticTasks(provider string) bool {
+	return UsesTiDBAutoEmbedding(provider) || SupportsAppSemanticTasks(provider)
 }

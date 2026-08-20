@@ -200,6 +200,12 @@ func (s *Server) deprovisionTenantCluster(ctx context.Context, t *meta.Tenant, r
 			return fmt.Errorf("legacy starter provisioner does not support deprovision")
 		}
 		return deprovisioner.Deprovision(ctx, cluster)
+	case tenant.ProviderMySQL:
+		deprovisioner, ok := s.provisioner.(tenant.Deprovisioner)
+		if !ok {
+			return fmt.Errorf("MySQL provisioner does not support deprovision")
+		}
+		return deprovisioner.Deprovision(ctx, cluster)
 	default:
 		return fmt.Errorf("delete is not supported for provider %s", t.Provider)
 	}

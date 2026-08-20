@@ -773,6 +773,14 @@ func (p *Pool) createBackend(ctx context.Context, t *meta.Tenant) (*backend.Dat9
 	opts.TenantID = t.ID
 	opts.TiDBCloudOrgID = tidbCloudOrgID
 	opts.S3EncryptionPolicy = resolvedEncryptionPolicy
+	if !SupportsSemanticTasks(t.Provider) {
+		opts.DatabaseAutoEmbedding = false
+		opts.AppSemanticTasksEnabled = false
+		opts.QueryEmbedding = backend.QueryEmbeddingOptions{}
+		opts.AsyncImageExtract = backend.AsyncImageExtractOptions{}
+		opts.AsyncAudioExtract = backend.AsyncAudioExtractOptions{}
+		opts.AsyncVideoExtract = backend.AsyncVideoExtractOptions{}
+	}
 
 	decryptDurationMs := 0.0
 	openStoreStart := time.Now()

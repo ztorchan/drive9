@@ -38,6 +38,23 @@ func TestSchemaDumpInitSQLByProvider(t *testing.T) {
 	}
 }
 
+func TestSchemaDumpInitSQLByMySQLProvider(t *testing.T) {
+	out := captureSchemaStdout(t, func() {
+		if err := runSchemaCommand([]string{"dump-init-sql", "--provider", "mysql"}); err != nil {
+			t.Fatalf("dump mysql schema: %v", err)
+		}
+	})
+	if !strings.Contains(out, "CREATE TABLE IF NOT EXISTS inodes") {
+		t.Fatalf("mysql dump missing inodes table: %q", out)
+	}
+	if !strings.Contains(out, "embedding") || !strings.Contains(out, "LONGTEXT") {
+		t.Fatalf("mysql dump missing non-vector semantic column: %q", out)
+	}
+	if strings.Contains(out, "VECTOR(") || strings.Contains(out, "EMBED_TEXT") {
+		t.Fatalf("mysql dump contains TiDB embedding syntax: %q", out)
+	}
+}
+
 func TestSchemaDumpInitSQLByProviderIncludesVault(t *testing.T) {
 	for _, provider := range []string{"tidb_zero", "tidb_cloud_native"} {
 		t.Run(provider, func(t *testing.T) {

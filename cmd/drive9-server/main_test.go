@@ -374,6 +374,44 @@ func TestBuildBackendOptionsFromEnvAudioDisabled(t *testing.T) {
 	}
 }
 
+func TestBuildSemanticOptionsSkipProviderWithoutSemanticSupport(t *testing.T) {
+	keys := []string{
+		"DRIVE9_QUERY_EMBED_API_BASE",
+		"DRIVE9_QUERY_EMBED_API_KEY",
+		"DRIVE9_QUERY_EMBED_MODEL",
+		"DRIVE9_IMAGE_EXTRACT_ENABLED",
+		"DRIVE9_IMAGE_EXTRACT_API_BASE",
+		"DRIVE9_AUDIO_EXTRACT_ENABLED",
+		"DRIVE9_AUDIO_EXTRACT_API_BASE",
+		"DRIVE9_VIDEO_EXTRACT_TENANT_ALLOWLIST",
+		"DRIVE9_VIDEO_EXTRACT_API_BASE",
+		"DRIVE9_EMBED_API_BASE",
+	}
+	restore := snapshotEnv(t, keys)
+	t.Cleanup(func() { restoreEnv(t, restore) })
+	unsetEnv(t, keys)
+	setEnv(t, "DRIVE9_QUERY_EMBED_API_BASE", "https://example.com")
+	setEnv(t, "DRIVE9_IMAGE_EXTRACT_ENABLED", "true")
+	setEnv(t, "DRIVE9_AUDIO_EXTRACT_ENABLED", "true")
+	setEnv(t, "DRIVE9_VIDEO_EXTRACT_TENANT_ALLOWLIST", "*")
+	setEnv(t, "DRIVE9_EMBED_API_BASE", "https://example.com")
+
+	opts, err := buildBackendOptionsFromEnvForSemantic(false)
+	if err != nil {
+		t.Fatalf("buildBackendOptionsFromEnvForSemantic: %v", err)
+	}
+	if opts.QueryEmbedding.Client != nil || backend.AsyncImageExtractWillWireRuntime(opts.AsyncImageExtract) || backend.AsyncAudioExtractWillWireRuntime(opts.AsyncAudioExtract) || backend.AsyncVideoExtractWillWireRuntime(opts.AsyncVideoExtract) {
+		t.Fatalf("semantic options should be disabled: %+v", opts)
+	}
+	client, _, err := buildTenantWorkerConfigFromEnvForSemantic(false)
+	if err != nil {
+		t.Fatalf("buildTenantWorkerConfigFromEnvForSemantic: %v", err)
+	}
+	if client != nil {
+		t.Fatal("semantic embedder should not be initialized")
+	}
+}
+
 func TestBuildTenantWorkerConfigFromEnvReadsWorkerOptionsWithoutEmbedder(t *testing.T) {
 	keys := []string{
 		"DRIVE9_EMBED_API_BASE",

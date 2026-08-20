@@ -10,13 +10,12 @@ import (
 	"go.uber.org/zap"
 )
 
-// MySQLNoEmbeddingTenantSchemaStatements returns a local-development tenant
+// MySQLNoEmbeddingTenantSchemaStatements returns a MySQL-compatible tenant
 // schema that avoids TiDB-only FTS/VECTOR/EMBED_TEXT features.
 //
-// This schema is intentionally not used for production tenant provisioning. It
-// exists to make drive9-server-local and e2e smoke tests runnable against an
-// ordinary MySQL-compatible database while preserving the same core filesystem,
-// layer, journal, git workspace, and vault tables.
+// It is used by drive9-server-local, e2e smoke tests, and the mysql tenant
+// provider while preserving the same core filesystem, layer, journal, git
+// workspace, and vault tables.
 //
 // The legacy `files` table is NOT part of this list: fresh local databases
 // start on the split-table schema only. Tests that exercise the legacy
@@ -182,9 +181,9 @@ func MySQLNoEmbeddingTenantSchemaStatements() []string {
 	return stmts
 }
 
-// InitMySQLNoEmbeddingTenantSchemaContext initializes the local no-embedding
-// tenant schema on any MySQL-compatible database. It deliberately skips TiDB
-// capability checks and TiDB-only optional indexes.
+// InitMySQLNoEmbeddingTenantSchemaContext initializes the no-embedding tenant
+// schema on any MySQL-compatible database. It deliberately skips TiDB capability
+// checks and TiDB-only optional indexes.
 func InitMySQLNoEmbeddingTenantSchemaContext(ctx context.Context, dsn string) error {
 	start := time.Now()
 	logger.Info(ctx, "tenant_mysql_no_embedding_schema_init_started")
