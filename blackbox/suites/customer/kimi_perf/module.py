@@ -25,7 +25,7 @@ from harness.module_base import BaseModule, module_config
 class Drive9KimiPerf(BaseModule):
     description = "Kimi sandbox workspace benchmark: namespace scale, small files, fsync, visibility, remount persistence, and same-host mounts."
     labels = ("drive9", "customer", "kimi", "performance", "fuse")
-    timeout = 3600
+    timeout = 24 * 3600
     report_profile = "customer"
     # Cached report markdown from the last run(), used by render_report().
     _last_report_markdown: str = ""
@@ -118,10 +118,12 @@ class Drive9KimiPerf(BaseModule):
             "small_file_ops": int(env_value("KIMI_PERF_SMALL_OPS", str(cfg.get("small_file_ops", 50)), ctx.suite)),
             "flush_file_sizes": self.int_csv_env(ctx, "KIMI_PERF_FLUSH_SIZES", cfg.get("flush_file_sizes", [1024, 20 * 1024, 100 * 1024])),
             "flush_concurrency": self.int_csv_env(ctx, "KIMI_PERF_FLUSH_CONCURRENCY", cfg.get("flush_concurrency", [1, 4, 16])),
+            "flush_modes": self.csv_env(ctx, "KIMI_PERF_FLUSH_MODES", cfg.get("flush_modes", ["close", "fsync", "fdatasync"])),
             "flush_ops": int(env_value("KIMI_PERF_FLUSH_OPS", str(cfg.get("flush_ops", 30)), ctx.suite)),
             "flush_visibility_samples": int(env_value("KIMI_PERF_FLUSH_VISIBILITY_SAMPLES", str(cfg.get("flush_visibility_samples", cfg.get("visibility_samples", 20))), ctx.suite)),
             "visibility_timeout_s": float(env_value("KIMI_PERF_VISIBILITY_TIMEOUT_S", str(cfg.get("visibility_timeout_s", 30)), ctx.suite)),
             "persistence_samples": int(env_value("KIMI_PERF_PERSISTENCE_SAMPLES", str(cfg.get("persistence_samples", 20)), ctx.suite)),
+            "persistence_modes": self.csv_env(ctx, "KIMI_PERF_PERSISTENCE_MODES", cfg.get("persistence_modes", ["close", "fsync"])),
             "same_host_mount_counts": self.int_csv_env(ctx, "KIMI_PERF_MOUNT_COUNTS", cfg.get("same_host_mount_counts", [1, 2, 5, 10])),
             "soak_minutes": float(env_value("KIMI_PERF_SOAK_MINUTES", str(cfg.get("soak_minutes", 0)), ctx.suite)),
             "raw_results": env_flag("KIMI_PERF_RAW", bool(cfg.get("raw_results", True)), ctx.suite),
@@ -588,7 +590,9 @@ class Drive9KimiPerf(BaseModule):
             reader_root = reader.mountpoint / "flush"
             for size in cfg["flush_file_sizes"]:
                 for concurrency in cfg["flush_concurrency"]:
-                    for mode in ("close", "fsync", "fdatasync"):
+                    for mode in cfg["flush_modes"]:
+                        if mode not in {"close", "fsync", "fdatasync"}:
+                            raise ModuleSkip(f"unknown Kimi flush mode: {mode}", "configuration skip")
                         rows.extend(self.flush_matrix(ctx, cfg, root, reader_root, raw_dir, int(size), int(concurrency), mode, issues))
         finally:
             self.record_unmount(ctx, reader, issues, section="flush", op="reader")
@@ -707,7 +711,9 @@ class Drive9KimiPerf(BaseModule):
         ctx.target.mkdir_remote(remote)
         samples = max(1, int(cfg["persistence_samples"]))
         for size in cfg["flush_file_sizes"]:
-            for mode in ("close", "fsync"):
+            for mode in cfg["persistence_modes"]:
+                if mode not in {"close", "fsync"}:
+                    raise ModuleSkip(f"unknown Kimi persistence mode: {mode}", "configuration skip")
                 rows.extend(self.persistence_matrix(ctx, cfg, remote, raw_dir, int(size), mode, samples, issues))
         return rows
 
